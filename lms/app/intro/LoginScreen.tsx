@@ -13,10 +13,10 @@ import {
   Keyboard,
   ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Colors } from '@/constants/Colors';
-import { Link, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { router, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import API_BASE_URL from '@/constants/config/api';
 
 const LoginScreen = () => {
@@ -30,16 +30,23 @@ const LoginScreen = () => {
 
   const validateInputs = () => {
     let isValid = true;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!email) {
-      setEmailError('Email is required.');
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      isValid = false;
+    } else if (!emailRegex.test(email.trim())) {
+      setEmailError('Please enter a valid email');
       isValid = false;
     } else {
       setEmailError('');
     }
 
     if (!password) {
-      setPasswordError('Password is required.');
+      setPasswordError('Password is required');
+      isValid = false;
+    } else if (password.length < 6) {
+      setPasswordError('Password must be at least 6 characters');
       isValid = false;
     } else {
       setPasswordError('');
@@ -50,38 +57,52 @@ const LoginScreen = () => {
 
   const handleLogin = async () => {
     if (!validateInputs()) return;
-
+  
     setIsLoading(true);
-
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+  
     try {
       const response = await fetch(`${API_BASE_URL}/login/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
         body: JSON.stringify({
-          email: email,
+          email: email.toLowerCase().trim(),
           password: password,
         }),
+        signal: controller.signal
       });
-
-      const data = await response.json();
-      console.log(data);
-
-      if (response.ok) {
-        await AsyncStorage.setItem('accessToken', data.access);
-        await AsyncStorage.setItem('refreshToken', data.refresh);
-        await AsyncStorage.setItem('user', JSON.stringify(data.user));
-        // Alert.alert('Success', `Welcome, ${data.user.first_name}!`);
-        setEmail('');
-        setPassword('');
-        router.push('/main/Dashboard');
-      } else {
-        Alert.alert('Login Failed', data.detail || 'Invalid credentials');
+  
+      clearTimeout(timeoutId);
+  
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Login failed');
       }
+  
+      const data = await response.json();
+      if (!data.access || !data.refresh) {
+        throw new Error('Invalid server response');
+      }
+  
+      // Store tokens
+      await AsyncStorage.multiSet([
+        ['accessToken', data.access],
+        ['refreshToken', data.refresh],
+        ['user', JSON.stringify(data.user)],
+      ]);
+  
+      // Navigate
+      router.replace(data.user.is_superuser 
+        ? '/admin/mainpage/AdminDashboard' 
+        : '/main/Dashboard');
+      
     } catch (error) {
-      console.error('Login Error:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      clearTimeout(timeoutId);
+      Alert.alert('Error', error.message);
     } finally {
       setIsLoading(false);
     }
@@ -93,77 +114,105 @@ const LoginScreen = () => {
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.container}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
         >
-          <Text style={styles.title}>Login</Text>
-
-          <View style={styles.inputContainer}>
-            <Ionicons
-              name="mail-outline"
-              size={20}
-              color={Colors.light.textSecondary}
-              style={styles.icon}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              placeholderTextColor={Colors.light.textSecondary}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
+          <View style={styles.header}>
+            <Text style={styles.title}>Welcome Back</Text>
+            <Text style={styles.subtitle}>Sign in to continue</Text>
           </View>
-          {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
 
-          <View style={styles.inputContainer}>
-            <Ionicons
-              name="lock-closed-outline"
-              size={20}
-              color={Colors.light.textSecondary}
-              style={styles.icon}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor={Colors.light.textSecondary}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-              <Ionicons
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
-                color={Colors.light.textSecondary}
-              />
+          <View style={styles.formContainer}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Email Address</Text>
+              <View style={[
+                styles.inputContainer, 
+                emailError ? styles.inputContainerError : null
+              ]}>
+                <Ionicons
+                  name="mail-outline"
+                  size={20}
+                  color={emailError ? '#ff0000' : '#888'}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your email"
+                  placeholderTextColor="#888"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  autoCorrect={false}
+                />
+              </View>
+              {emailError && <Text style={styles.errorText}>{emailError}</Text>}
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Password</Text>
+              <View style={[
+                styles.inputContainer, 
+                passwordError ? styles.inputContainerError : null
+              ]}>
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={20}
+                  color={passwordError ? '#ff0000' : '#888'}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#888"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.passwordToggle}
+                >
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#888"
+                  />
+                </TouchableOpacity>
+              </View>
+              {passwordError && <Text style={styles.errorText}>{passwordError}</Text>}
+            </View>
+
+            <TouchableOpacity 
+              style={styles.forgotPasswordContainer}
+              onPress={() => router.push('/auth/ForgotPassword')}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.button}
+              onPress={handleLogin}
+              disabled={isLoading}
+            >
+              <LinearGradient
+                colors={['#6a11cb', '#2575fc']}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Sign In</Text>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           </View>
-          {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
 
-          <TouchableOpacity style={styles.forgotPasswordContainer}>
-            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color={Colors.light.background} />
-            ) : (
-              <Text style={styles.buttonText}>Login</Text>
-            )}
-          </TouchableOpacity>
-
-          <View style={styles.signUpContainer}>
-            <Text style={styles.signUpText}>Don't have an account? </Text>
-            <Link href="/intro/SignupScreen" asChild>
-              <TouchableOpacity>
-                <Text style={styles.signUpLink}>Sign Up</Text>
-              </TouchableOpacity>
-            </Link>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don't have an account?</Text>
+            <TouchableOpacity onPress={() => router.push('/intro/SignupScreen')}>
+              <Text style={styles.footerLink}>Sign Up</Text>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -171,81 +220,118 @@ const LoginScreen = () => {
   );
 };
 
-export default LoginScreen;
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.light.background,
+    backgroundColor: '#fff',
   },
   container: {
     flex: 1,
+    paddingHorizontal: 24,
     justifyContent: 'center',
+  },
+  header: {
+    marginBottom: 32,
     alignItems: 'center',
-    paddingHorizontal: 40,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.light.textPrimary,
-    marginBottom: 20,
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#6a11cb',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#888',
+  },
+  formContainer: {
+    width: '100%',
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     width: '100%',
-    height: 50,
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    backgroundColor: '#fff',
+    height: 56,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
   },
-  icon: {
-    marginRight: 10,
+  inputContainerError: {
+    borderColor: '#ff0000',
   },
   input: {
     flex: 1,
-    color: Colors.light.textPrimary,
+    height: '100%',
+    color: '#333',
+    fontSize: 16,
+    marginLeft: 12,
+  },
+  passwordToggle: {
+    padding: 8,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ff0000',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  forgotPasswordContainer: {
+    alignSelf: 'flex-end',
+    marginBottom: 24,
+  },
+  forgotPasswordText: {
+    color: '#6a11cb',
+    fontWeight: '500',
+    fontSize: 14,
   },
   button: {
     width: '100%',
     height: 56,
-    backgroundColor: Colors.light.primary,
-    borderRadius: 40,
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#6a11cb',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  buttonGradient: {
+    width: '100%',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
   },
   buttonText: {
-    color: Colors.light.background,
-    fontWeight: '700',
-    fontSize: 14,
-    textTransform: 'uppercase',
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
   },
-  signUpContainer: {
+  footer: {
     flexDirection: 'row',
-    marginTop: 20,
+    justifyContent: 'center',
+    marginTop: 24,
   },
-  signUpText: {
-    color: Colors.light.textSecondary,
+  footerText: {
+    color: '#888',
+    fontSize: 14,
   },
-  signUpLink: {
-    color: Colors.light.primary,
+  footerLink: {
+    color: '#6a11cb',
     fontWeight: '600',
-  },
-  forgotPasswordContainer: {
-    alignSelf: 'flex-end',
-    marginRight: 10,
-    marginBottom: 20,
-  },
-  forgotPasswordText: {
-    color: Colors.light.primary,
-    fontWeight: '600',
-  },
-  errorText: {
-    color: 'red',
-    fontSize: 12,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
+    fontSize: 14,
+    marginLeft: 4,
   },
 });
+
+export default LoginScreen;

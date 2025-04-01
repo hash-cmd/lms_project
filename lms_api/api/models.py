@@ -4,18 +4,42 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import datetime, timedelta
-
-
+from django.core.validators import FileExtensionValidator
 
 class CustomUser(AbstractUser):
-    email = models.EmailField(unique=True)  # Ensure email is unique
+    email = models.EmailField(unique=True, verbose_name="email address")
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
-    reward =models.PositiveIntegerField(default=0)
-    profile_picture = models.CharField(max_length=255, blank=True)
+    reward = models.PositiveIntegerField(default=0)
+    profile_picture = models.ImageField(
+        upload_to='profile_pics/',
+        blank=True,
+        null=True,
+        validators=[FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png'])],
+        help_text="Upload a profile picture (JPG/PNG)"
+    )
+    updated_at = models.DateTimeField(auto_now=True)  # Helpful for cache busting
+
+    USERNAME_FIELD = 'email'  
+    REQUIRED_FIELDS = ['username']
+
+    class Meta:
+        verbose_name = "User"
+        verbose_name_plural = "Users"
 
     def __str__(self):
-        return self.username
+        return self.username or self.email
+
+    def delete(self, *args, **kwargs):
+        """Delete the associated profile picture when user is deleted"""
+        if self.profile_picture:
+            storage, path = self.profile_picture.storage, self.profile_picture.path
+            super().delete(*args, **kwargs)
+            storage.delete(path)
+        else:
+            super().delete(*args, **kwargs)
+
+
 
 class Project(models.Model):
     title = models.CharField(max_length=255)
@@ -40,96 +64,3 @@ class Project(models.Model):
 
     def __str__(self):
         return self.title
-
-    def check_for_notifications(self):
-        """
-        Check for notifications based on project and phase times.
-        Returns a list of notification messages.
-        """
-        notifications = []
-
-        # Helper function to add a notification
-        def add_notification(title, body):
-            notifications.append({"title": title, "body": body})
-
-        # Check project start time
-        if self.start_date and self.start_time:
-            start_datetime = timezone.make_aware(
-                datetime.strptime(f"{self.start_date} {self.start_time}", "%Y-%m-%d %H:%M")
-            )
-            # Add notification 15 minutes before the start time
-            reminder_time = start_datetime - timedelta(minutes=15)
-            if timezone.now() >= reminder_time and not self.completed:
-                add_notification(
-                    "Project Start Reminder",
-                    f"Project {self.title} starts in 15 minutes!"
-                )
-
-            # Add notification at the start time
-            if timezone.now() >= start_datetime and not self.completed:
-                add_notification(
-                    "Project Started",
-                    f"Project {self.title} has started!"
-                )
-
-        # Check project end time
-        if self.end_date and self.end_time:
-            end_datetime = timezone.make_aware(
-                datetime.strptime(f"{self.end_date} {self.end_time}", "%Y-%m-%d %H:%M")
-            )
-            # Add notification 15 minutes before the end time
-            reminder_time = end_datetime - timedelta(minutes=15)
-            if timezone.now() >= reminder_time and not self.completed:
-                add_notification(
-                    "Project Deadline Reminder",
-                    f"Project {self.title} deadline is in 15 minutes!"
-                )
-
-            # Add notification at the end time
-            if timezone.now() >= end_datetime and not self.completed:
-                add_notification(
-                    "Project Deadline Reached",
-                    f"Project {self.title} deadline has passed!"
-                )
-
-        # Check phases
-        for phase in self.phases:
-            if phase.get('start_date') and phase.get('start_time'):
-                phase_start_datetime = timezone.make_aware(
-                    datetime.strptime(f"{phase['start_date']} {phase['start_time']}", "%Y-%m-%d %H:%M")
-                )
-                # Add notification 15 minutes before the phase start time
-                reminder_time = phase_start_datetime - timedelta(minutes=15)
-                if timezone.now() >= reminder_time and not phase.get('completed', False):
-                    add_notification(
-                        "Phase Start Reminder",
-                        f"Phase {phase['title']} starts in 15 minutes!"
-                    )
-
-                # Add notification at the phase start time
-                if timezone.now() >= phase_start_datetime and not phase.get('completed', False):
-                    add_notification(
-                        "Phase Started",
-                        f"Phase {phase['title']} has started!"
-                    )
-
-            if phase.get('end_date') and phase.get('end_time'):
-                phase_end_datetime = timezone.make_aware(
-                    datetime.strptime(f"{phase['end_date']} {phase['end_time']}", "%Y-%m-%d %H:%M")
-                )
-                # Add notification 15 minutes before the phase end time
-                reminder_time = phase_end_datetime - timedelta(minutes=15)
-                if timezone.now() >= reminder_time and not phase.get('completed', False):
-                    add_notification(
-                        "Phase Deadline Reminder",
-                        f"Phase {phase['title']} deadline is in 15 minutes!"
-                    )
-
-                # Add notification at the phase end time
-                if timezone.now() >= phase_end_datetime and not phase.get('completed', False):
-                    add_notification(
-                        "Phase Deadline Reached",
-                        f"Phase {phase['title']} deadline has passed!"
-                    )
-
-        return notifications

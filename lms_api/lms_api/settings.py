@@ -86,7 +86,11 @@ WSGI_APPLICATION = 'lms_api.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    "default": dj_database_url.config(default=config("DATABASE_URL"))
+    # "default": dj_database_url.config(default=config("DATABASE_URL"))
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3', 
+    }        
 }
 
 # Password validation
@@ -125,10 +129,17 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+BASE_URL = 'http://localhost:8000'
 
 AUTH_USER_MODEL = 'api.CustomUser'
 
@@ -218,3 +229,10 @@ LOGGING = {
     },
 }
 
+
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+FILE_UPLOAD_PERMISSIONS = 0o644
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o755
+
+# Maximum upload size (10MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760

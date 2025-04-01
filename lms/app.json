@@ -7,12 +7,13 @@
     "icon": "./assets/images/icon.png",
     "scheme": "lms",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.inccorp.lms",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["fetch", "remote-notification"]
       }
     },
     "android": {
@@ -20,7 +21,11 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.inccorp.lms"
+      "package": "com.inccorp.lms",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -36,6 +41,13 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-notifications",
+      [
+        "expo-background-fetch",
+        {
+          "minimumInterval": 15
         }
       ]
     ],

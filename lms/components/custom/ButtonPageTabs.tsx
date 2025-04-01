@@ -1,61 +1,113 @@
-import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Dimensions } from 'react-native';
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/Colors';
-import { Link } from 'expo-router';
+import { Link, usePathname } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 
-const ButtonPageTabs = () => {
+const AdminButtonPageTabs = () => {
+  const { width } = Dimensions.get('window');
+  const pathname = usePathname();
+  const tabWidth = width / 5;
+
+  const tabs = [
+      { name: 'Home', icon: 'home', route: '/main/Dashboard' },
+      { name: 'Projects', icon: 'briefcase', route: '/project/Projects' },
+      { name: 'Tracker', icon: 'pulse', route: '/project/TrackAllProjects' },
+      { name: 'Settings', icon: 'settings', route: '/main/Settings' },
+  ];
+
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const isActive = (route: string) => {
+    return pathname === route || pathname.startsWith(route);
+  };
+
   return (
-    <View style={styles.tabWrapper}>
-      <Link href="/main/Dashboard" asChild>
-        <TouchableOpacity style={styles.tabButton}>
-          <Ionicons name="home" size={24} color={Colors.light.primary} />
-          <Text style={styles.tabText}>Home</Text>
-        </TouchableOpacity>
-      </Link>
-
-      <Link href="/project/Projects" asChild>
-        <TouchableOpacity style={styles.tabButton}>
-          <Ionicons name="briefcase" size={24} color={Colors.light.primary} />
-          <Text style={styles.tabText}>Projects</Text>
-        </TouchableOpacity>
-      </Link>
-
-      <Link href="/project/TrackAllProjects" asChild>
-        <TouchableOpacity style={styles.tabButton}>
-          <Ionicons name="pulse" size={24} color={Colors.light.primary} />
-          <Text style={styles.tabText}>Tracker</Text>
-        </TouchableOpacity>
-      </Link>
-
-      <Link href="/main/Settings" asChild>
-        <TouchableOpacity style={styles.tabButton}>
-          <Ionicons name="settings" size={24} color={Colors.light.primary} />
-          <Text style={styles.tabText}>Settings</Text>
-        </TouchableOpacity>
-      </Link>
-    </View>
+    <LinearGradient
+      colors={['#ffffff', '#f8f9fa']}
+      style={styles.tabWrapper}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 0 }}
+    >
+      {tabs.map((tab) => {
+        const active = isActive(tab.route);
+        return (
+          <Link href={tab.route} asChild key={tab.route}>
+            <TouchableOpacity 
+              style={[styles.tabButton, { width: tabWidth }]}
+              onPress={handlePress}
+              activeOpacity={0.7}
+            >
+              <View style={styles.iconContainer}>
+                <Ionicons 
+                  name={tab.icon as any} 
+                  size={24} 
+                  color={active ? '#6a11cb' : '#9ca3af'}
+                />
+                {active && (
+                  <LinearGradient
+                    colors={['#6a11cb', '#2575fc']}
+                    style={styles.underline}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  />
+                )}
+              </View>
+              <Text style={[
+                styles.tabText,
+                active && styles.activeText
+              ]}>
+                {tab.name}
+              </Text>
+            </TouchableOpacity>
+          </Link>
+        );
+      })}
+    </LinearGradient>
   );
 };
-
-export default ButtonPageTabs;
 
 const styles = StyleSheet.create({
   tabWrapper: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     width: '100%',
-    paddingVertical: 0,
+    paddingVertical: 12,
     backgroundColor: '#fff',
-    position: 'relative',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
   },
   tabButton: {
     alignItems: 'center',
-    padding: 10,
-    borderRadius: 10,
+    paddingVertical: 4,
+  },
+  iconContainer: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  underline: {
+    height: 2,
+    width: '80%',
+    marginTop: 4,
+    borderRadius: 1,
   },
   tabText: {
-    marginTop: 5,
-    color: Colors.light.textPrimary,
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#9ca3af',
+  },
+  activeText: {
+    color: '#6a11cb',
+    fontWeight: '600',
   },
 });
+
+export default AdminButtonPageTabs;

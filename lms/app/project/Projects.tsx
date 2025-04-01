@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -7,598 +7,639 @@ import {
   FlatList,
   ActivityIndicator,
   TouchableOpacity,
-  Image,
   TextInput,
-  Animated,
-  Easing,
+  RefreshControl,
+  Alert,
+  Image
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/constants/Colors';
 import { Link, router } from 'expo-router';
 import ButtonPageTabs from '@/components/custom/ButtonPageTabs';
 import { Ionicons } from '@expo/vector-icons';
-import * as Notifications from 'expo-notifications';
 import API_BASE_URL from '@/constants/config/api';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import axios from 'axios';
 
-// Configure notification handler
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+type Phase = {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  completed: boolean;
+};
+
+type Project = {
+  id: string;
+  title: string;
+  description: string;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  completed: boolean;
+  phases: Phase[];
+};
 
 const Projects = () => {
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('ongoing');
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'ongoing' | 'completed'>('ongoing');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchVisible, setIsSearchVisible] = useState(false);
-  const [isFabExpanded, setIsFabExpanded] = useState(false);
-  const slideAnimation = useState(new Animated.Value(0))[0];
-  const opacityAnimation = useState(new Animated.Value(0))[0];
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Request permissions for notifications
-  useEffect(() => {
-    (async () => {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status !== 'granted') {
-        alert('You need to enable notifications to receive reminders.');
+  const fetchProjects = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const accessToken = await AsyncStorage.getItem('accessToken');
+      if (!accessToken) {
+        throw new Error('Authentication required');
       }
-    })();
+
+      const response = await axios.get(`${API_BASE_URL}/projects/`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (response.status !== 200) {
+        throw new Error('Failed to fetch projects');
+      }
+
+      const data = response.data;
+      setProjects(data);
+    } catch (err) {
+      setError(err.message || 'Failed to load projects');
+      console.error('Error fetching projects:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  const fetchProjects = async () => {
+  const onRefresh = useCallback(() => {
+    Haptics.selectionAsync();
+    setRefreshing(true);
+    fetchProjects();
+  }, [fetchProjects]);
+
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
+
+  const toggleProjectCompletion = useCallback(async (projectId: string) => {
+    Haptics.selectionAsync();
     try {
       const accessToken = await AsyncStorage.getItem('accessToken');
       if (!accessToken) {
-        throw new Error('Access token not found');
+        throw new Error('Authentication required');
       }
 
-      const response = await fetch(`${API_BASE_URL}/projects/`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
+      const response = await axios.put(
+        `${API_BASE_URL}/projects/${projectId}/complete/`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
+      if (response.status !== 200) {
+        throw new Error('Failed to update project');
       }
 
-      const data = await response.json();
-      console.log('API Response:', data);
-      setProjects(data);
-      setLoading(false);
-
-      // Schedule notifications for projects and phases
-      scheduleNotifications(data);
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-      setError(error.message);
-      setLoading(false);
-    }
-  };
-
-  const toggleProjectCompletion = async (projectId) => {
-    try {
-      const accessToken = await AsyncStorage.getItem('accessToken');
-      if (!accessToken) {
-        throw new Error('Access token not found');
-      }
-
-      const response = await fetch(`${API_BASE_URL}/projects/${projectId}/complete/`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-
-      const updatedProject = await response.json();
-      setProjects((prevProjects) =>
-        prevProjects.map((project) =>
+      const updatedProject = response.data;
+      setProjects(prevProjects =>
+        prevProjects.map(project =>
           project.id === projectId ? updatedProject : project
         )
       );
-    } catch (error) {
-      console.error('Error toggling project completion:', error);
-      setError(error.message);
+    } catch (err) {
+      console.error('Error toggling project completion:', err);
+      Alert.alert('Error', 'Failed to update project status');
     }
-  };
-
-  const scheduleNotifications = (projects) => {
-    projects.forEach((project) => {
-      // Skip if project is completed
-      if (!project.completed) {
-        // Schedule notifications for project start and end
-        scheduleNotification(project.start_date, project.start_time, `Project Start: ${project.title}`, true); // 15 minutes before
-        scheduleNotification(project.start_date, project.start_time, `Project Started: ${project.title}`, false); // At event time
-
-        scheduleNotification(project.end_date, project.end_time, `Project Deadline: ${project.title}`, true); // 15 minutes before
-        scheduleNotification(project.end_date, project.end_time, `Project Deadline Reached: ${project.title}`, false); // At event time
-
-        // Schedule notifications for phases start and end
-        project.phases.forEach((phase) => {
-          // Skip if phase is completed
-          if (!phase.completed) {
-            scheduleNotification(phase.start_date, phase.start_time, `Phase Start: ${phase.title}`, true); // 15 minutes before
-            scheduleNotification(phase.start_date, phase.start_time, `Phase Started: ${phase.title}`, false); // At event time
-
-            scheduleNotification(phase.end_date, phase.end_time, `Phase Deadline: ${phase.title}`, true); // 15 minutes before
-            scheduleNotification(phase.end_date, phase.end_time, `Phase Deadline Reached: ${phase.title}`, false); // At event time
-          }
-        });
-      }
-    });
-  };
-
-  const navigateToUpdateScreen = (projectId) => {
-    router.push({
-      pathname: '/project/UpdateProject',
-      params: { id: projectId },
-    });
-  };
-
-  const calculateCompletionPercentage = (phases, isProjectCompleted) => {
-    if (!phases || phases.length === 0) return 0;
-
-    const completedPhases = phases.filter((phase) => phase.completed).length;
-    const totalPhases = phases.length;
-
-    const percentage = Math.round((completedPhases / totalPhases) * 100);
-
-    if (completedPhases === totalPhases && !isProjectCompleted) {
-      return 99;
-    }
-
-    if (isProjectCompleted) {
-      return 100;
-    }
-
-    return percentage;
-  };
-
-  // Schedule a notification
-  const scheduleNotification = async (date, time, title, isReminder) => {
-    if (!date || !time) return; // Skip if date or time is missing
-
-    const [year, month, day] = date.split('-');
-    const [hours, minutes] = time.split(':');
-
-    // Create a Date object for the event time
-    const eventDate = new Date(year, month - 1, day, hours, minutes);
-
-    // Calculate the notification time
-    const notificationDate = isReminder
-      ? new Date(eventDate.getTime() - 15 * 60 * 1000) // 15 minutes before
-      : eventDate; // At event time
-
-    // Check if the notification date is in the future
-    if (notificationDate.getTime() > Date.now()) {
-      // Use the correct trigger format
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Reminder',
-          body: title,
-          sound: true,
-        },
-        trigger: {
-          type: 'date',
-          timestamp: notificationDate.getTime(), // Use timestamp in milliseconds
-        },
-      });
-
-      console.log(`Scheduled notification for: ${notificationDate}`);
-    } else {
-      console.log(`Skipping notification for past event: ${title}`);
-    }
-  };
-
-  // Fetch projects and schedule notifications when the component mounts
-  useEffect(() => {
-    fetchProjects();
   }, []);
 
-  // Filter projects based on the active tab and search query
-  const filteredProjects = projects.filter((project) => {
-    const matchesTab =
-      activeTab === 'ongoing' ? !project.completed : project.completed;
+  const filteredProjects = useMemo(() => {
+    return projects.filter(project => {
+      const matchesTab = activeTab === 'ongoing' ? !project.completed : project.completed;
+      const matchesSearch = project.title.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesTab && matchesSearch;
+    });
+  }, [projects, activeTab, searchQuery]);
 
-    const matchesSearch = project.title
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
+  const calculateProjectProgress = useCallback((project: Project): number => {
+    if (project.completed) return 100;
+    const phases = project.phases || [];
+    if (phases.length === 0) return 0;
+    
+    if (phases.every(p => p.start_date && p.end_date)) {
+      const now = new Date();
+      let totalWeight = 0;
+      let completedWeight = 0;
 
-    return matchesTab && matchesSearch;
-  });
+      phases.forEach(phase => {
+        const start = new Date(phase.start_date);
+        const end = new Date(phase.end_date);
+        const duration = end.getTime() - start.getTime();
+        
+        if (phase.completed) {
+          completedWeight += duration;
+        } else if (now >= start) {
+          const progressDuration = Math.min(now.getTime(), end.getTime()) - start.getTime();
+          completedWeight += (progressDuration / duration) * duration;
+        }
+        
+        totalWeight += duration;
+      });
 
-  const ProjectItem = React.memo(({ item, onPress, onToggleCompletion }) => {
-    const formatDate = (dateString) => {
-      if (!dateString) return { monthDay: 'No date', year: '' };
-  
-      const date = new Date(dateString);
-      const month = date.toLocaleString('default', { month: 'short' });
-      const day = date.getDate();
-      const year = date.getFullYear();
-  
-      return { monthDay: `${month} ${day}`, year: `${year}` };
-    };
-  
-    const { monthDay: endMonthDay, year: endYear } = formatDate(item.end_date);
-    const completionPercentage = calculateCompletionPercentage(item.phases, item.completed);
-  
+      return totalWeight > 0 ? (completedWeight / totalWeight) * 100 : 0;
+    }
+    
+    const completed = phases.filter(p => p.completed).length;
+    return (completed / phases.length) * 100;
+  }, []);
+
+  const formatDate = useCallback((dateString: string) => {
+    if (!dateString) return '';
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch {
+      return dateString;
+    }
+  }, []);
+
+  const renderProjectItem = ({ item }: { item: Project }) => {
+    const completionPercentage = calculateProjectProgress(item);
+    const completedPhases = item.phases?.filter(p => p.completed).length || 0;
+    const totalPhases = item.phases?.length || 0;
+
     return (
-      <TouchableOpacity
-        onPress={() => {
-          if (!item.completed) {
-            onPress(item.id); // Only allow navigation if the project is not completed
-          }
-        }}
-        accessibilityLabel={`Project ${item.title}`}
-        accessibilityRole="button"
+      <TouchableOpacity 
+        style={styles.projectCard}
+        onPress={() => !item.completed && router.push(`/project/UpdateProject?id=${item.id}`)}
+        activeOpacity={0.8}
       >
-        <View style={[
-          styles.projectItem,
-          item.completed && styles.completedProjectItem, // Apply grayed-out style for completed projects
-        ]}>
-          {/* Project Header */}
-          <View style={styles.projectHeader}>
-            <Text style={styles.projectName}>{item.title}</Text>
-            <Text style={styles.projectDetails}>
-              {endMonthDay}, {endYear}
-            </Text>
+        <LinearGradient
+          colors={item.completed ? ['#28a745', '#5cb85c'] : ['#6a11cb', '#2575fc']}
+          style={styles.cardGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <View style={styles.cardHeader}>
+            <Text style={styles.projectTitle} numberOfLines={1}>{item.title}</Text>
+            {item.completed && (
+              <View style={styles.completedBadge}>
+                <Text style={styles.completedText}>Completed</Text>
+              </View>
+            )}
           </View>
-  
-          {/* Project Description */}
-          <Text style={styles.projectDescription}>{item.description || 'No description'}</Text>
-  
-          {/* Completion Status */}
-          <View style={styles.completionContainer}>
-            <Text style={styles.completionText}>
-              {item.completed ? 'Completed' : 'In Progress'}
+          
+          {item.description && (
+            <Text style={styles.projectDescription} numberOfLines={2}>
+              {item.description}
             </Text>
+          )}
+          
+          <View style={styles.projectMeta}>
+            <View style={styles.dateContainer}>
+              {item.start_date && (
+                <View style={styles.dateItem}>
+                  <Ionicons name="calendar" size={14} color="#fff" />
+                  <Text style={styles.dateText}>{formatDate(item.start_date)}</Text>
+                </View>
+              )}
+              
+              {item.end_date && (
+                <View style={styles.dateItem}>
+                  <Ionicons name="flag" size={14} color="#fff" />
+                  <Text style={styles.dateText}>{formatDate(item.end_date)}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          
+          <View style={styles.cardFooter}>
+            <Text style={styles.phasesText}>
+              {completedPhases}/{totalPhases} phases completed
+            </Text>
+            
             <TouchableOpacity
-              style={styles.toggleButton}
-              onPress={() => onToggleCompletion(item.id)}
+              onPress={() => toggleProjectCompletion(item.id)}
+              style={styles.completeButton}
             >
               <Ionicons
                 name={item.completed ? 'checkmark-circle' : 'checkmark-circle-outline'}
                 size={24}
-                color={item.completed ? 'green' : '#ccc'}
+                color="#fff"
               />
             </TouchableOpacity>
           </View>
-  
-          {/* Progress Bar */}
+
           <View style={styles.progressBarContainer}>
-            <View
-              style={[
-                styles.progressBar,
-                { width: `${completionPercentage}%` },
-              ]}
-            />
+            <View style={[
+              styles.progressBar,
+              { width: `${completionPercentage}%` },
+              completionPercentage === 100 && styles.completedProgressBar,
+            ]} />
+            <Text style={styles.progressText}>{Math.round(completionPercentage)}%</Text>
           </View>
-        </View>
+        </LinearGradient>
       </TouchableOpacity>
     );
-  });
-
-  const renderNoProjects = () => (
-    <View style={styles.noProjectsContainer}>
-      <Image
-        source={require('@/assets/images/no-task.png')}
-        style={styles.noProjectsImage}
-        resizeMode="contain"
-      />
-      <Text style={styles.noProjectsText}>No projects found</Text>
-    </View>
-  );
-
-  // Handle FAB click to expand/collapse
-  const handleFabClick = () => {
-    setIsFabExpanded(!isFabExpanded);
-    Animated.parallel([
-      Animated.timing(slideAnimation, {
-        toValue: isFabExpanded ? 0 : 1,
-        duration: 300,
-        easing: Easing.ease,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnimation, {
-        toValue: isFabExpanded ? 0 : 1,
-        duration: 300,
-        easing: Easing.ease,
-        useNativeDriver: true,
-      }),
-    ]).start();
   };
 
-  const slideUpStyle = {
-    transform: [
-      {
-        translateY: slideAnimation.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, -100], // Adjust this value to control the slide-up distance
-        }),
-      },
-    ],
-    opacity: opacityAnimation,
-  };
+  if (error && !loading && !refreshing) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.errorContainer}>
+          <Ionicons name="warning" size={48} color="#dc3545" />
+          <Text style={styles.errorText}>Error loading projects</Text>
+          <Text style={styles.errorSubText}>{error}</Text>
+          <TouchableOpacity 
+            style={styles.retryButton} 
+            onPress={fetchProjects}
+          >
+            <LinearGradient
+              colors={['#6a11cb', '#2575fc']}
+              style={styles.gradientButton}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* Header and Search */}
-      <View style={styles.headerContainer}>
-          {isSearchVisible ? (
-            <View style={styles.searchContainer}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search projects..."
-                placeholderTextColor="#ccc"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoFocus={true}
-              />
-              <TouchableOpacity
-                onPress={() => {
-                  setIsSearchVisible(false);
-                  setSearchQuery('');
-                }}
+      <LinearGradient
+        colors={['#f8f9fa', '#ffffff']}
+        style={styles.backgroundGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Projects</Text>
+          <Link href="/project/AddProject" asChild>
+            <TouchableOpacity style={styles.addButtonContainer}>
+              <LinearGradient
+                colors={['#6a11cb', '#2575fc']}
+                style={styles.gradientButton}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
               >
-                <Ionicons name="close" size={24} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.headerRow}>
-              <View style={[{flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}]}>
-                <Ionicons name="calendar" size={24} color="#fff"/><Text style={[styles.headerText, {marginLeft: 12}]}>Projects</Text>
-                </View>
-              
-              <TouchableOpacity onPress={() => setIsSearchVisible(true)}>
-                <Ionicons name="search" size={24} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          )}
+                <Ionicons name="add" size={24} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </Link>
         </View>
-      <View style={styles.contentContainer}>
         
-
-        {/* Project List */}
-        {loading ? (
-          <ActivityIndicator size="large" color="#0000ff" />
-        ) : error ? (
-          <Text style={styles.errorText}>Error: {error}</Text>
+        <View style={styles.filterContainer}>
+          <View style={styles.searchContainer}>
+            <Ionicons name="search" size={18} color="#6d6d6d" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search projects..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholderTextColor="#6d6d6d"
+            />
+          </View>
+          
+          <View style={styles.filterButtons}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('ongoing')}
+              activeOpacity={0.8}
+            >
+              {activeTab === 'ongoing' ? (
+                <LinearGradient
+                  colors={['#6a11cb', '#2575fc']}
+                  style={styles.activeFilter}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Text style={styles.activeFilterText}>Ongoing</Text>
+                </LinearGradient>
+              ) : (
+                <View style={styles.filterButton}>
+                  <Text style={styles.filterButtonText}>Ongoing</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={() => setActiveTab('completed')}
+              activeOpacity={0.8}
+            >
+              {activeTab === 'completed' ? (
+                <LinearGradient
+                  colors={['#6a11cb', '#2575fc']}
+                  style={styles.activeFilter}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Text style={styles.activeFilterText}>Completed</Text>
+                </LinearGradient>
+              ) : (
+                <View style={styles.filterButton}>
+                  <Text style={styles.filterButtonText}>Completed</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+        
+        {loading && !refreshing ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6a11cb" />
+          </View>
         ) : filteredProjects.length === 0 ? (
-          renderNoProjects()
+          <View style={styles.emptyContainer}>
+            <Ionicons name="folder-open" size={48} color="#adb5bd" />
+            <Text style={styles.emptyText}>
+              {searchQuery ? 'No matching projects found' : 'No projects yet'}
+            </Text>
+          </View>
         ) : (
           <FlatList
             data={filteredProjects}
-            keyExtractor={(item) => item.id.toString()}
-            renderItem={({ item }) => (
-              <ProjectItem
-                item={item}
-                onPress={navigateToUpdateScreen}
-                onToggleCompletion={toggleProjectCompletion}
+            renderItem={renderProjectItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={['#6a11cb']}
+                tintColor="#6a11cb"
               />
-            )}
-            contentContainerStyle={styles.listContainer}
+            }
           />
         )}
-      </View>
-
-      {/* Floating Action Button */}
-      <TouchableOpacity style={styles.fab} onPress={handleFabClick}>
-        <Ionicons name="add" size={24} color="#fff" />
-      </TouchableOpacity>
-
-      {/* Slide-Up Tabs with Icons */}
-      <Animated.View style={[styles.slideUpTabs, slideUpStyle]}>
-         <Link href="/project/AddProject" asChild>
-          <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => {
-                handleFabClick();
-              }}
-            >
-              <Ionicons name="calendar" size={24} color="#fff" />
-            </TouchableOpacity>
-        </Link>
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => {
-            setActiveTab('ongoing');
-            handleFabClick();
-          }}
-        >
-          <Ionicons name="time-outline" size={24} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => {
-            setActiveTab('completed');
-            handleFabClick();
-          }}
-        >
-          <Ionicons name="checkmark-done-outline" size={24} color="#fff" />
-        </TouchableOpacity>
-      </Animated.View>
-
-      {/* Fixed Bottom Tabs */}
-      <View style={styles.fixedTabContainer}>
+      </LinearGradient>
+      
+      <View style={styles.tabs}>
         <ButtonPageTabs />
       </View>
     </SafeAreaView>
   );
 };
 
-export default Projects;
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    paddingVertical: 20,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#fff',
   },
-  contentContainer: {
+  backgroundGradient: {
     flex: 1,
-    marginHorizontal: 20,
   },
-  headerContainer: {
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    backgroundColor: Colors.light.primary,
-  },
-  headerRow: {
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    padding: 16,
+    paddingBottom: 8,
   },
-  headerText: {
+  headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#2d2d2d',
+  },
+  addButtonContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  gradientButton: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
   },
   searchInput: {
     flex: 1,
-    height: 40,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    marginRight: 10,
-    color: '#000',
+    marginLeft: 8,
+    color: '#2d2d2d',
   },
-  projectItem: {
-    backgroundColor: '#fff',
+  filterButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 32,
+  },
+  filterButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 64,
+    marginHorizontal: 4,
     borderRadius: 8,
-    padding: 16,
-    marginVertical: 10,
+    backgroundColor: '#e9ecef',
+    minHeight: 40,
+  },
+  activeFilter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 64,
+    marginHorizontal: 4,
+    borderRadius: 8,
+    minHeight: 40,
+  },
+  filterButtonText: {
+    color: '#495057',
+    fontWeight: '500',
+  },
+  activeFilterText: {
+    color: '#fff',
+    fontWeight: '500',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0.5, height: 0.5 },
+    textShadowRadius: 1,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 80,
+  },
+  projectCard: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  completedProjectItem: {
-    opacity: 0.6, // Grayed-out style for completed projects
+  cardGradient: {
+    padding: 16,
   },
-  projectHeader: {
+  cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
   },
-  projectName: {
-    fontSize: 16,
+  projectTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
-    color: Colors.light.textPrimary,
+    color: '#fff',
     flex: 1,
+    marginRight: 8,
   },
-  projectDetails: {
+  completedBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  completedText: {
     fontSize: 12,
-    color: '#888',
+    color: '#fff',
+    fontWeight: '600',
   },
   projectDescription: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
+    color: 'rgba(255,255,255,0.8)',
+    marginBottom: 12,
+    lineHeight: 20,
   },
-  completionContainer: {
+  projectMeta: {
+    marginBottom: 12,
+  },
+  dateContainer: {
+    marginTop: 4,
+  },
+  dateItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  dateText: {
+    fontSize: 13,
+    color: '#fff',
+    marginLeft: 6,
+  },
+  cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.2)',
+    paddingTop: 12,
   },
-  completionText: {
-    fontSize: 14,
-    color: '#555',
+  phasesText: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.8)',
   },
-  toggleButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
+  completeButton: {
+    padding: 4,
   },
   progressBarContainer: {
     height: 8,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 4,
     overflow: 'hidden',
+    position: 'relative',
+    marginTop: 8,
   },
   progressBar: {
     height: '100%',
-    backgroundColor: Colors.light.primary,
+    backgroundColor: '#fff',
     borderRadius: 4,
   },
-  errorText: {
-    color: 'red',
-    fontSize: 16,
+  completedProgressBar: {
+    backgroundColor: '#28a745',
   },
-  listContainer: {
-    paddingBottom: 90,
+  progressText: {
+    position: 'absolute',
+    right: 4,
+    top: -2,
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: 'bold',
   },
-  noProjectsContainer: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  noProjectsImage: {
-    width: 150,
-    height: 150,
-    marginBottom: 20,
-  },
-  noProjectsText: {
-    fontSize: 24,
-    color: '#888',
-  },
-  fab: {
-    position: 'absolute',
-    bottom: 108,
-    right: 40,
-    backgroundColor: Colors.light.primary,
-    borderRadius: 40,
-    width: 64,
-    height: 64,
+  emptyContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 4,
+    padding: 40,
   },
-  slideUpTabs: {
-    position: 'absolute',
-    bottom: 56,
-    right: 40,
-    borderRadius: 28,
-    padding: 8,
-    flexDirection: 'column',
-    alignItems: 'center',
+  emptyText: {
+    fontSize: 18,
+    color: '#2d2d2d',
+    marginTop: 16,
   },
-  iconButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 40,
+  errorContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 18,
-    backgroundColor: Colors.light.primary,
+    padding: 20,
   },
-  fixedTabContainer: {
-    height: 70,
+  errorText: {
+    fontSize: 18,
+    color: '#dc3545',
+    marginTop: 16,
+    fontWeight: 'bold',
+  },
+  errorSubText: {
+    fontSize: 14,
+    color: '#adb5bd',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 20,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  tabs: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
     borderTopWidth: 1,
-    borderTopColor: '#ccc',
-    backgroundColor: '#f9f9f9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
+    borderTopColor: Colors.light.lightGray,
+    backgroundColor: '#fff',
   },
 });
+
+export default Projects;

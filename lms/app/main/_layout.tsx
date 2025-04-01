@@ -6,6 +6,7 @@ export default function Layout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Dashboard" />
       <Stack.Screen name="Settings" />
+      <Stack.Screen name="ChangeEmailScreen" />
     </Stack>
   );
 }

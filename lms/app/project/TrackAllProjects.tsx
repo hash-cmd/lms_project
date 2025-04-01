@@ -1,475 +1,552 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StyleSheet, Text, View, ScrollView, FlatList, TouchableOpacity } from 'react-native';
+import { 
+  SafeAreaView, 
+  StyleSheet, 
+  Text, 
+  View, 
+  ScrollView, 
+  FlatList, 
+  TouchableOpacity,
+  RefreshControl,
+  Platform 
+} from 'react-native';
 import ButtonPageTabs from '@/components/custom/ButtonPageTabs';
 import { Colors } from '@/constants/Colors';
 import { CircularProgressBase } from 'react-native-circular-progress-indicator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import API_BASE_URL from '@/constants/config/api';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+
+type Phase = {
+  id: string;
+  title: string;
+  completed: boolean;
+  start_date: string;
+  end_date: string;
+  completed_at?: string;
+};
+
+type Project = {
+  id: string;
+  title: string;
+  description: string;
+  start_date: string;
+  end_date: string;
+  completed: boolean;
+  completed_at?: string;
+  phases?: Phase[];
+};
+
+type CompletionStats = {
+  early: number;
+  inProgress: number;
+  late: number;
+};
+
+type ProgressStats = {
+  progress: number;
+  completion: CompletionStats;
+  total: number;
+};
 
 const TrackAllProjects = () => {
-  const [projects, setProjects] = useState([]);
-  const [overallProgress, setOverallProgress] = useState(0);
-  const [projectsCompletionStats, setProjectsCompletionStats] = useState({
-    early: 0, // Count of early projects
-    late: 0,  // Count of late projects
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [stats, setStats] = useState({
+    projects: {
+      progress: 0,
+      completion: { early: 0, inProgress: 0, late: 0 },
+      total: 0
+    },
+    phases: {
+      progress: 0,
+      completion: { early: 0, inProgress: 0, late: 0 },
+      total: 0
+    }
   });
-  const [phasesProgress, setPhasesProgress] = useState(0);
-  const [phasesCompletionStats, setPhasesCompletionStats] = useState({
-    early: 0, // Count of early phases
-    late: 0,  // Count of late phases
-  });
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch all projects and their phases
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        const accessToken = await AsyncStorage.getItem('accessToken');
-        if (!accessToken) {
-          throw new Error('Access token not found');
-        }
+  const fetchProjects = async () => {
+    try {
+      setRefreshing(true);
+      const accessToken = await AsyncStorage.getItem('accessToken');
+      if (!accessToken) throw new Error('Authentication required');
 
-        const response = await fetch(`${API_BASE_URL}/projects/`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-        });
+      const response = await fetch(`${API_BASE_URL}/projects/`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch projects');
-        }
+      if (!response.ok) throw new Error('Failed to fetch projects');
+      
+      const data = await response.json();
+      setProjects(data);
+      calculateStats(data);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
-        const data = await response.json();
-        setProjects(data);
+  const calculateStats = (projects: Project[]) => {
+    const projectStats = calculateCompletionStats(
+      projects,
+      (p) => p.completed,
+      (p) => p.completed_at,
+      (p) => p.end_date
+    );
 
-        // Calculate overall progress
-        const totalProjects = data.length;
-        const completedProjects = data.filter((project) => project.completed).length;
-        const overallProgressValue = totalProjects > 0 ? (completedProjects / totalProjects) * 100 : 0;
-        setOverallProgress(overallProgressValue);
+    const allPhases = projects.flatMap(p => p.phases || []);
+    const phaseStats = calculateCompletionStats(
+      allPhases,
+      (p) => p.completed,
+      (p) => p.completed_at,
+      (p) => p.end_date
+    );
 
-        // Calculate projects completion stats (early vs late)
-        let earlyProjects = 0;
-        let lateProjects = 0;
-        data.forEach((project) => {
-          if (project.completed) {
-            const endDate = new Date(project.end_date);
-            const completedAt = new Date(project.completed_at);
-            if (completedAt < endDate) {
-              earlyProjects++;
-            } else {
-              lateProjects++;
-            }
-          }
-        });
-        setProjectsCompletionStats({
-          early: earlyProjects, // Count of early projects
-          late: lateProjects,  // Count of late projects
-        });
-
-        // Calculate phases progress
-        const allPhases = data.flatMap((project) => project.phases || []);
-        const totalPhases = allPhases.length;
-        const completedPhases = allPhases.filter((phase) => phase.completed).length;
-        const phasesProgressValue = totalPhases > 0 ? (completedPhases / totalPhases) * 100 : 0;
-        setPhasesProgress(phasesProgressValue);
-
-        // Calculate phases completion stats (early vs late)
-        let earlyPhases = 0;
-        let latePhases = 0;
-        allPhases.forEach((phase) => {
-          if (phase.completed) {
-            const endDate = new Date(phase.end_date);
-            const completedAt = new Date(phase.completed_at);
-            if (completedAt < endDate) {
-              earlyPhases++;
-            } else {
-              latePhases++;
-            }
-          }
-        });
-        setPhasesCompletionStats({
-          early: earlyPhases, // Count of early phases
-          late: latePhases,  // Count of late phases
-        });
-      } catch (error) {
-        console.error('Error fetching projects:', error);
+    setStats({
+      projects: {
+        progress: calculateProgress(projects, (p) => p.completed),
+        completion: projectStats,
+        total: projects.length
+      },
+      phases: {
+        progress: calculateProgress(allPhases, (p) => p.completed),
+        completion: phaseStats,
+        total: allPhases.length
       }
-    };
+    });
+  };
 
-    fetchProjects();
-  }, []);
+  const calculateCompletionStats = <T extends unknown>(
+    items: T[],
+    isCompleted: (item: T) => boolean,
+    getCompletedAt: (item: T) => string | undefined,
+    getEndDate: (item: T) => string
+  ): CompletionStats => {
+    const stats: CompletionStats = { early: 0, inProgress: 0, late: 0 };
 
-  // Render function for each project item
-  const renderProjectItem = ({ item }) => {
-    const startDate = new Date(item.start_date);
+    items.forEach(item => {
+      if (isCompleted(item)) {
+        const completedAt = getCompletedAt(item);
+        const endDate = getEndDate(item);
+        
+        if (completedAt) {
+          const completionDate = new Date(completedAt);
+          const dueDate = new Date(endDate);
+          const timeDiff = completionDate.getTime() - dueDate.getTime();
+          
+          if (timeDiff < 0) {
+            stats.early++;
+          } else if (timeDiff === 0) {
+            stats.inProgress++;
+          } else {
+            stats.late++;
+          }
+        }
+      } else {
+        stats.inProgress++;
+      }
+    });
+
+    return stats;
+  };
+
+  const calculateProgress = <T extends unknown>(
+    items: T[],
+    isCompleted: (item: T) => boolean
+  ): number => {
+    if (items.length === 0) return 0;
+    const completed = items.filter(item => isCompleted(item)).length;
+    return (completed / items.length) * 100;
+  };
+
+  const calculateProjectProgress = (project: Project): number => {
+    if (project.completed) return 100;
+    const phases = project.phases || [];
+    if (phases.length === 0) return 0;
+    
+    if (phases.every(p => p.start_date && p.end_date)) {
+      const now = new Date();
+      let totalWeight = 0;
+      let completedWeight = 0;
+
+      phases.forEach(phase => {
+        const start = new Date(phase.start_date);
+        const end = new Date(phase.end_date);
+        const duration = end.getTime() - start.getTime();
+        
+        if (phase.completed) {
+          completedWeight += duration;
+        } else if (now >= start) {
+          const progressDuration = Math.min(now.getTime(), end.getTime()) - start.getTime();
+          completedWeight += (progressDuration / duration) * duration;
+        }
+        
+        totalWeight += duration;
+      });
+
+      return totalWeight > 0 ? (completedWeight / totalWeight) * 100 : 0;
+    }
+    
+    const completed = phases.filter(p => p.completed).length;
+    return (completed / phases.length) * 100;
+  };
+
+  const renderProjectItem = ({ item }: { item: Project }) => {
+    const progress = calculateProjectProgress(item);
+    const isCompleted = item.completed;
     const endDate = new Date(item.end_date);
-    const completedAt = item.completed ? new Date(item.completed_at) : null;
+    const completedAt = isCompleted && item.completed_at ? new Date(item.completed_at) : null;
+    const hasPhases = item.phases && item.phases.length > 0;
+    const completedPhases = item.phases?.filter(p => p.completed).length || 0;
+    const totalPhases = item.phases?.length || 0;
 
-    // Calculate progress percentage based on phases
-    const phases = item.phases || [];
-    const totalPhases = phases.length;
-    const completedPhases = phases.filter((phase) => phase.completed).length;
-
-    // If all phases are completed but the project is not marked as completed, set progress to 99%
-    const progress =
-      totalPhases > 0
-        ? completedPhases === totalPhases && !item.completed
-          ? 99 // 99% if all phases are completed but the project is not marked as completed
-          : (completedPhases / totalPhases) * 100 // Otherwise, calculate progress normally
-        : 0; // Default to 0 if there are no phases
+    let statusText = 'In Progress';
+    let statusColor = '#6a11cb'; // Updated to gradient start color
+    
+    if (isCompleted) {
+      statusText = 'Completed';
+      statusColor = '#28a745'; // Success green
+    } else if (new Date() > new Date(item.end_date)) {
+      statusText = 'Overdue';
+      statusColor = '#dc3545'; // Error red
+    }
 
     return (
       <TouchableOpacity
-        onPress={() => {
-          // Only navigate to the update page if the project is not completed
-          if (!item.completed) {
-            router.push({
-              pathname: '/project/UpdateProject',
-              params: { id: item.id },
-            });
-          }
-        }}
+        onPress={() => router.push(`/project/UpdateProject?id=${item.id}`)}
+        activeOpacity={0.8}
       >
-        <View
-          style={[
-            styles.projectItem,
-            item.completed && styles.completedProjectItem, // Apply grayed-out style for completed projects
-          ]}
+        <LinearGradient
+          colors={isCompleted ? ['#28a745', '#5cb85c'] : ['#6a11cb', '#2575fc']} // Updated gradient
+          style={[styles.projectCard, isCompleted && styles.completedCard]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
         >
-          {/* Left Side: Project Name, Description, and Percentage */}
-          <View style={styles.leftContainer}>
-            <View style={styles.projectHeader}>
-              <Text style={styles.projectName}>{item.title}</Text>
+          <View style={styles.projectContent}>
+            <View style={styles.textContainer}>
+              <Text style={styles.projectTitle} numberOfLines={1}>{item.title}</Text>
+              <Text style={styles.projectDescription} numberOfLines={2}>{item.description}</Text>
+              
+              {hasPhases && (
+                <View style={styles.phasesInfo}>
+                  <Text style={styles.phasesText}>
+                    {completedPhases}/{totalPhases} phases completed
+                  </Text>
+                  {totalPhases > 0 && (
+                    <View style={styles.phaseProgressBar}>
+                      <View 
+                        style={[
+                          styles.phaseProgressFill,
+                          { width: `${(completedPhases / totalPhases) * 100}%` }
+                        ]} 
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+              
+              {completedAt && (
+                <Text style={styles.completionDate}>
+                  Completed: {completedAt.toLocaleDateString()}
+                </Text>
+              )}
             </View>
-            <Text style={styles.projectDescription}>{item.description}</Text>
-            {completedAt && (
-              <Text style={styles.completedDate}>
-                Completed: {completedAt.toLocaleDateString()}
+
+            <View style={styles.progressContainer}>
+              <Text style={[styles.statusText, { color: statusColor }]}>
+                {statusText}
               </Text>
-            )}
-          </View>
-
-          {/* Right Side: End Date and Progress Circle */}
-          <View style={styles.rightContainer}>
-            {/* End Date */}
-            <Text style={styles.projectDetails}>
-              {endDate.toLocaleDateString()}
-            </Text>
-
-            <Text style={styles.projectPercentage}>{progress.toFixed(1)}</Text>
-
-            {/* Progress Circle */}
-            <View style={styles.circleWrapper}>
-              <CircularProgressBase
-                value={progress} // Progress percentage
-                radius={30} // Adjust size as needed
-                duration={1000}
-                activeStrokeColor="rgb(26, 17, 71)" // Custom color for active stroke
-                inActiveStrokeColor="rgba(255, 255, 255, 0.3)" // Translucent white for inactive stroke
-                inActiveStrokeOpacity={1}
-              />
-              <Text style={styles.circleText}>
-                {progress.toFixed(1)} {/* Percentage inside the circle */}
-              </Text>
+              <Text style={styles.dueDate}>{endDate.toLocaleDateString()}</Text>
+              <View style={styles.progressCircle}>
+                <CircularProgressBase
+                  value={progress}
+                  radius={28}
+                  duration={800}
+                  activeStrokeColor={isCompleted ? '#28a745' : '#6a11cb'} // Updated colors
+                  inActiveStrokeColor="#e5e7eb"
+                  inActiveStrokeOpacity={0.8}
+                />
+                <Text style={[
+                  styles.progressText,
+                  { color: isCompleted ? '#28a745' : '#6a11cb' } // Updated colors
+                ]}>
+                  {Math.round(progress)}%
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
+        </LinearGradient>
       </TouchableOpacity>
     );
   };
 
+  const renderStatCard = (
+    title: string, 
+    stats: ProgressStats
+  ) => (
+    <LinearGradient
+      colors={['#6a11cb', '#2575fc']} // Updated gradient
+      style={styles.statCard}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
+      <Text style={styles.statTitle}>{title}</Text>
+      <View style={styles.progressCircle}>
+        <CircularProgressBase
+          value={stats.progress}
+          radius={30}
+          duration={800}
+          activeStrokeColor="#a5b4fc"
+          inActiveStrokeColor="rgba(255,255,255,0.2)"
+        />
+        <Text style={styles.statProgressText}>{Math.round(stats.progress)}%</Text>
+      </View>
+      <View style={styles.statDetails}>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>✓ Early</Text>
+          <Text style={styles.statValue}>{stats.completion.early}</Text>
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>🔄 In Progress</Text>
+          <Text style={styles.statValue}>{stats.completion.inProgress}</Text>
+        </View>
+        <View style={styles.statRow}>
+          <Text style={styles.statLabel}>⌛ Late</Text>
+          <Text style={styles.statValue}>{stats.completion.late}</Text>
+        </View>
+      </View>
+      <Text style={styles.statTotal}>Total: {stats.total}</Text>
+    </LinearGradient>
+  );
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Main Content */}
-      <View style={styles.container}>
-        <Text style={styles.title}>Track All Projects</Text>
-
-        {/* Cards Row (30% of height) */}
-        <View style={styles.cardsContainer}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.progressContainer}
-          >
-            {/* Projects Completion (Early vs Late) */}
-            <View style={styles.progressItem}>
-              <View>
-                <Text style={styles.progressLabel}>Projects Completed Stats</Text>
-                <View style={styles.circleWrapper}>
-                  <CircularProgressBase
-                    value={
-                      projectsCompletionStats.early + projectsCompletionStats.late > 0
-                        ? (projectsCompletionStats.early / (projectsCompletionStats.early + projectsCompletionStats.late)) * 100
-                        : 0
-                    }
-                    radius={30}
-                    duration={1000}
-                    activeStrokeColor="#87CEEB"
-                    inActiveStrokeColor="rgba(255, 255, 255, 0.3)"
-                    inActiveStrokeOpacity={1}
-                  />
-                  <Text style={styles.circleText}>
-                    {(
-                      projectsCompletionStats.early + projectsCompletionStats.late > 0
-                        ? (projectsCompletionStats.early / (projectsCompletionStats.early + projectsCompletionStats.late)) * 100
-                        : 0
-                    ).toFixed(1)}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={[{ flexDirection: 'row' }]}>
-                <Text style={[styles.progressLabel, { marginRight: 8 }]}>
-                  Early: {projectsCompletionStats.early}
-                </Text>
-                <Text style={styles.progressLabel}>Late: {projectsCompletionStats.late}</Text>
-              </View>
-            </View>
-
-            {/* Phases Completion (Early vs Late) */}
-            <View style={styles.progressItem}>
-              <View>
-                <Text style={styles.progressLabel}>Phases Completed Stats</Text>
-                <View style={styles.circleWrapper}>
-                  <CircularProgressBase
-                    value={
-                      phasesCompletionStats.early + phasesCompletionStats.late > 0
-                        ? (phasesCompletionStats.early / (phasesCompletionStats.early + phasesCompletionStats.late)) * 100
-                        : 0
-                    }
-                    radius={30}
-                    duration={1000}
-                    activeStrokeColor="#87CEEB"
-                    inActiveStrokeColor="rgba(255, 255, 255, 0.3)"
-                    inActiveStrokeOpacity={1}
-                  />
-                  <Text style={styles.circleText}>
-                    {(
-                      phasesCompletionStats.early + phasesCompletionStats.late > 0
-                        ? (phasesCompletionStats.early / (phasesCompletionStats.early + phasesCompletionStats.late)) * 100
-                        : 0
-                    ).toFixed(1)}
-                  </Text>
-                </View>
-              </View>
-              <View style={[{ flexDirection: 'row' }]}>
-                <Text style={[styles.progressLabel, { marginRight: 8 }]}>
-                  Early: {phasesCompletionStats.early}
-                </Text>
-                <Text style={styles.progressLabel}>Late: {phasesCompletionStats.late}</Text>
-              </View>
-            </View>
-
-            {/* Overall Progress */}
-            <View style={styles.progressItem}>
-              <View>
-                <Text style={styles.progressLabel}>Ongoing Project Progress</Text>
-                <View style={styles.circleWrapper}>
-                  <CircularProgressBase
-                    value={overallProgress}
-                    radius={30}
-                    duration={1000}
-                    activeStrokeColor="#87CEEB"
-                    inActiveStrokeColor="rgba(255, 255, 255, 0.3)"
-                    inActiveStrokeOpacity={1}
-                  />
-                  <Text style={styles.circleText}>{overallProgress.toFixed(1)}</Text>
-                </View>
-              </View>
-              <View style={[{ flexDirection: 'row' }]}>
-                <Text style={[styles.progressLabel, { marginRight: 4 }]}>
-                  Completed: {projects.filter((project) => project.completed).length}
-                </Text>
-                <Text style={styles.progressLabel}>Total: {projects.length}</Text>
-              </View>
-            </View>
-
-            {/* Phases Progress */}
-            <View style={styles.progressItem}>
-              <View>
-                <Text style={styles.progressLabel}>Ongoing Phases Progress</Text>
-                <View style={styles.circleWrapper}>
-                  <CircularProgressBase
-                    value={phasesProgress}
-                    radius={30}
-                    duration={1000}
-                    activeStrokeColor="#87CEEB"
-                    inActiveStrokeColor="rgba(255, 255, 255, 0.3)"
-                    inActiveStrokeOpacity={1}
-                  />
-                  <Text style={styles.circleText}>{phasesProgress.toFixed(1)}</Text>
-                </View>
-              </View>
-              <View style={[{ flexDirection: 'row' }]}>
-                <Text style={[styles.progressLabel, { marginRight: 4 }]}>
-                  Completed: {projects.flatMap((project) => project.phases || []).filter((phase) => phase.completed).length}
-                </Text>
-                <Text style={styles.progressLabel}>
-                  Total: {projects.flatMap((project) => project.phases || []).length}
-                </Text>
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-
-        {/* Project List Section (70% of height) */}
-        <View style={styles.projectListContainer}>
-          <Text style={styles.sectionTitle}>Project List</Text>
-          <FlatList
-            data={projects}
-            renderItem={renderProjectItem}
-            keyExtractor={(item) => item.id.toString()}
-            contentContainerStyle={styles.projectList}
+    <SafeAreaView style={styles.container}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={fetchProjects}
+            tintColor="#6a11cb" // Updated color
           />
-        </View>
-      </View>
+        }
+      >
+        <Text style={styles.header}>Project Tracker</Text>
+        
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.statsContainer}
+        >
+          {renderStatCard('Projects', stats.projects)}
+          {renderStatCard('Phases', stats.phases)}
+        </ScrollView>
 
-      {/* Bottom Tabs */}
-      <View style={styles.tabContainer}>
+        <View style={styles.sectionHeaderContainer}>
+          <Text style={styles.sectionHeader}>
+            Your Projects ({projects.length})
+          </Text>
+          {stats.projects.total > 0 && (
+            <Text style={styles.completionRate}>
+              {Math.round((stats.projects.completion.early) / 
+               stats.projects.total * 100)}% early completion rate
+            </Text>
+          )}
+        </View>
+        <FlatList
+          data={projects}
+          renderItem={renderProjectItem}
+          keyExtractor={item => item.id}
+          scrollEnabled={false}
+          contentContainerStyle={styles.listContainer}
+        />
+      </ScrollView>
+
+      <BlurView intensity={90} tint="light" style={styles.tabBar}>
         <ButtonPageTabs />
-      </View>
+      </BlurView>
     </SafeAreaView>
   );
 };
 
-export default TrackAllProjects;
-
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    paddingVertical: 20,
-    backgroundColor: Colors.light.background,
-  },
   container: {
     flex: 1,
+    backgroundColor: '#f8f9fa', // Updated to match admin background
+  },
+  scrollContent: {
     padding: 20,
+    paddingBottom: 90,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: Colors.light.textPrimary,
+  header: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#2d2d2d', // Updated to match admin text color
+    marginBottom: 24,
+    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'Roboto',
   },
-  cardsContainer: {
-    flex: 0.3, // 30% of the height
+  statsContainer: {
+    paddingBottom: 16,
   },
-  progressContainer: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    marginBottom: 20,
-  },
-  progressItem: {
-    backgroundColor: Colors.light.primary,
+  statCard: {
+    width: 180,
     borderRadius: 16,
-    margin: 8,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    height: 180,
-    width: 130,
+    padding: 16,
+    marginRight: 16,
+    shadowColor: '#6a11cb', // Updated to match gradient
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  progressLabel: {
-    marginTop: 4,
-    marginBottom: 10,
-    fontSize: 10,
-    color: '#fff',
-    fontWeight: 'bold',
-    textAlign: 'left',
+  statTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
   },
-  circleWrapper: {
-    position: 'relative',
+  progressCircle: {
     alignItems: 'center',
     justifyContent: 'center',
+    marginVertical: 8,
   },
-  circleText: {
+  statProgressText: {
     position: 'absolute',
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#fff',
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 16,
   },
-  projectListContainer: {
-    flex: 0.7, // 70% of the height
+  statDetails: {
+    marginTop: 8,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: Colors.light.textPrimary,
+  statRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
-  projectList: {
-    paddingBottom: 20,
+  statLabel: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
   },
-  projectItem: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
+  statValue: {
+    color: 'white',
+    fontWeight: '700',
+  },
+  statTotal: {
+    color: 'white',
+    fontSize: 12,
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  sectionHeaderContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 16,
+  },
+  sectionHeader: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#2d2d2d', // Updated to match admin text color
+  },
+  completionRate: {
+    fontSize: 14,
+    color: '#6d6d6d', // Updated to match admin secondary text
+    marginLeft: 8,
+  },
+  listContainer: {
+    paddingBottom: 24,
+  },
+  projectCard: {
+    borderRadius: 12,
+    marginBottom: 12,
     padding: 16,
-    marginBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  completedCard: {
+    opacity: 0.7,
+  },
+  projectContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
   },
-  completedProjectItem: {
-    opacity: 0.6, // Grayed-out style for completed projects
-  },
-  leftContainer: {
+  textContainer: {
     flex: 1,
     marginRight: 16,
   },
-  rightContainer: {
-    alignItems: 'center',
-  },
-  projectHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  projectName: {
+  projectTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: Colors.light.textPrimary,
-  },
-  projectPercentage: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 8,
-    position: 'absolute',
-    top: 45,
-    elevation: 20, // Android: Adds elevation (shadow)
-    zIndex: 20, 
+    fontWeight: '600',
+    color: '#fff', // White text for gradient background
+    marginBottom: 4,
   },
   projectDescription: {
     fontSize: 14,
-    color: '#666',
-    marginTop: 8,
+    color: 'rgba(255,255,255,0.8)', // Semi-transparent white
+    marginBottom: 8,
+    lineHeight: 20,
   },
-  completedDate: {
-    fontSize: 12,
-    color: '#888',
-  },
-  projectDetails: {
-    fontSize: 12,
-    color: '#888',
+  phasesInfo: {
+    marginTop: 4,
     marginBottom: 8,
   },
-  tabContainer: {
-    height: 70,
-    borderTopWidth: 1,
-    borderTopColor: '#ccc',
-    backgroundColor: Colors.light.background,
-    justifyContent: 'center',
+  phasesText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)', // Semi-transparent white
+    marginBottom: 4,
+  },
+  phaseProgressBar: {
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  phaseProgressFill: {
+    height: '100%',
+    backgroundColor: '#fff', // White progress bar
+  },
+  completionDate: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    fontStyle: 'italic',
+  },
+  progressContainer: {
     alignItems: 'center',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  dueDate: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    marginBottom: 8,
+  },
+  progressText: {
+    fontWeight: '600',
+    fontSize: 12,
     position: 'absolute',
-    bottom: 0,
+  },
+  tabBar: {
+    position: 'absolute',
+    bottom: 30,
     left: 0,
     right: 0,
+    borderTopWidth: 1,
+    backgroundColor: '#fff',
   },
 });
+
+export default TrackAllProjects;

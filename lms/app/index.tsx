@@ -3,114 +3,141 @@ import {
   StyleSheet,
   Text,
   View,
-  TouchableWithoutFeedback,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Dimensions,
-  TouchableOpacity,
-  Image,
+  ImageBackground,
+  StatusBar,
+  TouchableOpacity
 } from 'react-native';
-import React from 'react';
-import Animated, { FadeIn } from 'react-native-reanimated';
-
-import { Colors } from '@/constants/Colors';
-import { Link } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
 
 const Index = () => {
   const { width } = Dimensions.get('window');
+  const isSmallDevice = width < 375;
+  const router = useRouter();
 
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+    <ImageBackground 
+      source={require('@/assets/images/indexImageBackground.jpg')}
+      style={styles.backgroundImage}
+      resizeMode="cover"
+    >
+      <StatusBar barStyle="light-content" />
       <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.container}
-        >
-          <View style={styles.imageContainer}>
-            <Image
-              source={require('@/assets/images/icon.png')} // Update the path to your image
-              style={styles.image}
-              resizeMode="contain"
-            />
-            {/* Add the bold and big text here */}
-            <Text style={styles.title}>Life Management System</Text>
-          </View>
-          {/* <Animated.View entering={FadeIn.duration(800)} style={styles.content}>
-            <Text style={styles.subHeader}>
-              Your all-in-one solution for seamless life management and productivity.
+        <View style={styles.contentContainer}>
+          <Animated.View entering={FadeInUp.duration(800)} style={styles.titleContainer}>
+            <Text style={[styles.title, isSmallDevice && styles.titleSmall]}>
+              Life Management
             </Text>
-          </Animated.View> */}
+            <Text style={[styles.title, isSmallDevice && styles.titleSmall]}>
+              System
+            </Text>
+          </Animated.View>
 
-          <Link href="/intro/LoginScreen" style={[styles.button, { width: width < 768 ? 320 : '50%' }]} asChild>
-            <TouchableOpacity >
-              <Text style={styles.buttonText}>Get Started</Text>
+          <Animated.View entering={FadeInDown.duration(1000)} style={styles.subtitleContainer}>
+            <Text style={styles.subtitle}>
+              Your all-in-one solution for organizing tasks and boosting productivity
+            </Text>
+          </Animated.View>
+
+          <Animated.View entering={FadeIn.delay(600).duration(1000)} style={styles.buttonWrapper}>
+            <TouchableOpacity 
+              style={[styles.button, { width: width < 768 ? width * 0.8 : width * 0.4 }]}
+              activeOpacity={0.8}
+              onPress={() => router.push('/intro/LoginScreen')}
+            >
+              <LinearGradient
+                colors={['#6a11cb', '#2575fc']}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <Text style={styles.buttonText}>Get Started</Text>
+              </LinearGradient>
             </TouchableOpacity>
-          </Link>
-        </KeyboardAvoidingView>
+          </Animated.View>
+        </View>
       </SafeAreaView>
-    </TouchableWithoutFeedback>
+    </ImageBackground>
   );
 };
 
-export default Index;
-
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.light.background,
-    justifyContent: 'center', // Center content vertically
-    alignItems: 'center', // Center content horizontally
-  },
   container: {
     flex: 1,
-    justifyContent: 'center', // Center content vertically
-    alignItems: 'center', // Center content horizontally
-    paddingVertical: 32,
+    width: '100%',
   },
-  imageContainer: {
+  backgroundImage: {
     flex: 1,
-    justifyContent: 'center', // Center image and text vertically
-    alignItems: 'center', // Center image and text horizontally
+    width: '100%',
+    height: '100%',
   },
-  image: {
-    width: 360, // Set a specific width
-    height: 110, // Set a specific height
+  safeArea: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  contentContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  titleContainer: {
+    marginBottom: 30,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 20, // Big font size
-    fontWeight: 'bold', // Bold text
-    color: Colors.light.textPrimary, // Use your primary text color
-    textAlign: 'center', // Center the text horizontally
-    flexWrap: 'wrap',// Set a maximum width to prevent text from stretching too far
-  },
-  content: {
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 32,
-  },
-  subHeader: {
-    color: Colors.light.textPrimary,
-    fontSize: 16,
+    fontSize: 36,
+    fontWeight: '800',
+    color: '#fff',
     textAlign: 'center',
-    paddingHorizontal: 32,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 10,
+    lineHeight: 42,
+  },
+  titleSmall: {
+    fontSize: 28,
+    lineHeight: 36,
+  },
+  subtitleContainer: {
+    marginBottom: 40,
+    paddingHorizontal: 20,
+  },
+  subtitle: {
+    fontSize: 18,
+    color: 'rgba(255,255,255,0.9)',
+    textAlign: 'center',
+    lineHeight: 24,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0.5, height: 0.5 },
+    textShadowRadius: 3,
+  },
+  buttonWrapper: {
+    width: '100%',
+    alignItems: 'center',
   },
   button: {
-    backgroundColor: Colors.light.primary,
-    paddingVertical: 20,
-    borderRadius: 48,
-    elevation: 5,
+    borderRadius: 50,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 5,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  buttonGradient: {
+    paddingVertical: 18,
+    paddingHorizontal: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 32,
   },
   buttonText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 16,
+    fontSize: 18,
   },
 });
+
+export default Index;
